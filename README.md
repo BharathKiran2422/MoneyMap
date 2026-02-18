@@ -2,6 +2,8 @@
 
 MoneyMap is a modern, AI-powered personal finance management application designed to provide users with a simple, smart, and secure way to take control of their finances. It offers an intuitive platform to track income and expenses, visualize spending habits, and receive personalized financial guidance.
 
+![MoneyMap Screenshot](/public/moneymap.png)
+
 ## Key Features
 
 - **AI-Powered Transaction Logging:** Add transactions quickly using natural language commands or voice dictation.
