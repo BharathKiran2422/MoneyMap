@@ -2,7 +2,7 @@
 
 MoneyMap is a modern, AI-powered personal finance management application designed to provide users with a simple, smart, and secure way to take control of their finances. It offers an intuitive platform to track income and expenses, visualize spending habits, and receive personalized financial guidance.
 
-![MoneyMap Screenshot](/public/moneymap.png)
+![MoneyMap Screenshot](/public/moneymap.webp)
 
 ## Abstract
 MoneyMap is an AI-native financial ecosystem that transforms bookkeeping into an automated, insight-rich experience. By integrating Generative AI (Google Gemini) with a robust Next.js and Firebase stack, it allows users to manage multiple accounts through conversational interfaces and gain strategic insights into their financial health.
