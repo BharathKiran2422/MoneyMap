@@ -1,6 +1,6 @@
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Transaction } from "@/types";
-import { TrendingUp, TrendingDown, Wallet, BarChart } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, BarChart, Percent } from "lucide-react";
 
 type Props = {
   transactions: Transaction[];
@@ -22,11 +22,13 @@ export default function AccountOverview({
     .reduce((sum, t) => sum + t.amount, 0);
 
   const balance = totalIncome - totalExpenses;
+  const savingsRate = totalIncome > 0 ? ((totalIncome - totalExpenses) / totalIncome) * 100 : 0;
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
       style: 'currency',
       currency: 'INR',
+      maximumFractionDigits: 0,
     }).format(amount);
   };
 
@@ -48,28 +50,35 @@ export default function AccountOverview({
                 </div>
             </div>
         </CardHeader>
-        <CardContent className="relative">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="p-6 rounded-xl bg-white/50 dark:bg-slate-800/50 backdrop-blur-sm border border-slate-200/50 dark:border-slate-700/50 hover:shadow-lg transition-all duration-300">
+        <CardContent className="relative pb-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="p-5 rounded-xl bg-white/50 dark:bg-slate-800/50 backdrop-blur-sm border border-slate-200/50 dark:border-slate-700/50 hover:shadow-lg transition-all duration-300">
                     <div className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <h3 className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Total Income</h3>
-                        <TrendingUp className="h-5 w-5 text-emerald-500" />
+                        <h3 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Income</h3>
+                        <TrendingUp className="h-4 w-4 text-emerald-500" />
                     </div>
-                    <div className="text-2xl font-bold">{formatCurrency(totalIncome)}</div>
+                    <div className="text-xl font-bold">{formatCurrency(totalIncome)}</div>
                 </div>
-                <div className="p-6 rounded-xl bg-white/50 dark:bg-slate-800/50 backdrop-blur-sm border border-slate-200/50 dark:border-slate-700/50 hover:shadow-lg transition-all duration-300">
+                <div className="p-5 rounded-xl bg-white/50 dark:bg-slate-800/50 backdrop-blur-sm border border-slate-200/50 dark:border-slate-700/50 hover:shadow-lg transition-all duration-300">
                     <div className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <h3 className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Total Expenses</h3>
-                        <TrendingDown className="h-5 w-5 text-rose-500" />
+                        <h3 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Expenses</h3>
+                        <TrendingDown className="h-4 w-4 text-rose-500" />
                     </div>
-                    <div className="text-2xl font-bold">{formatCurrency(totalExpenses)}</div>
+                    <div className="text-xl font-bold">{formatCurrency(totalExpenses)}</div>
                 </div>
-                <div className="p-6 rounded-xl bg-white/50 dark:bg-slate-800/50 backdrop-blur-sm border border-slate-200/50 dark:border-slate-700/50 hover:shadow-lg transition-all duration-300">
+                <div className="p-5 rounded-xl bg-white/50 dark:bg-slate-800/50 backdrop-blur-sm border border-slate-200/50 dark:border-slate-700/50 hover:shadow-lg transition-all duration-300">
                     <div className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <h3 className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Current Balance</h3>
-                        <Wallet className="h-5 w-5 text-muted-foreground" />
+                        <h3 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Balance</h3>
+                        <Wallet className="h-4 w-4 text-primary" />
                     </div>
-                    <div className="text-2xl font-bold">{formatCurrency(balance)}</div>
+                    <div className="text-xl font-bold">{formatCurrency(balance)}</div>
+                </div>
+                <div className="p-5 rounded-xl bg-white/50 dark:bg-slate-800/50 backdrop-blur-sm border border-slate-200/50 dark:border-slate-700/50 hover:shadow-lg transition-all duration-300">
+                    <div className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <h3 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Savings Rate</h3>
+                        <Percent className="h-4 w-4 text-blue-500" />
+                    </div>
+                    <div className="text-xl font-bold">{savingsRate.toFixed(1)}%</div>
                 </div>
             </div>
         </CardContent>

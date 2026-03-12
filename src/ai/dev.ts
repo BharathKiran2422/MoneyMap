@@ -8,3 +8,4 @@ import '@/ai/flows/financial-health-score.ts';
 import '@/ai/flows/life-event-planner.ts';
 import '@/ai/flows/create-transaction-from-text.ts';
 import '@/ai/flows/financial-chatbot.ts';
+import '@/ai/flows/generate-notification-tips.ts';

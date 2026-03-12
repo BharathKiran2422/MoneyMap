@@ -4,6 +4,7 @@ import './globals.css';
 import { Toaster } from "@/components/ui/toaster"
 import { AuthProvider } from '@/lib/auth';
 import { cn } from "@/lib/utils";
+import Footer from '@/components/Footer';
 
 export const metadata: Metadata = {
   title: 'MoneyMap – AI Personal Finance Tracker',
@@ -23,9 +24,12 @@ export default function RootLayout({
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
       </head>
-      <body className={cn("font-body antialiased", "bg-background min-h-screen overflow-x-hidden")}>
+      <body className={cn("font-body antialiased", "bg-background min-h-screen overflow-x-hidden flex flex-col")}>
         <AuthProvider>
-          {children}
+          <div className="flex-1">
+            {children}
+          </div>
+          <Footer />
           <Toaster />
         </AuthProvider>
       </body>

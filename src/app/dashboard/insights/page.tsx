@@ -1,15 +1,15 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/lib/auth';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, query, doc, getDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
+import { collection, getDocs, query, doc, getDoc, Timestamp, updateDoc } from 'firebase/firestore';
 import { Transaction, UserProfile, Account } from '@/types';
 import { Button } from '@/components/ui/button';
 import { getSpendingSuggestions } from '@/ai/flows/spending-suggestions';
 import { Lightbulb, Loader2, ArrowLeft, Sparkles, FileText, HeartPulse, Map, CalendarDays } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { format, startOfMonth, endOfMonth } from 'date-fns';
+import { format } from 'date-fns';
 import { useRouter, useSearchParams } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -17,24 +17,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import FinancialHealthScore from '@/components/dashboard/FinancialHealthScore';
 import LifeEventPlanner from '@/components/dashboard/LifeEventPlanner';
 import MonthlyReport from '@/components/dashboard/MonthlyReport';
-
-// Helper function to format the AI response
-const formatAiResponse = (response: string): string => {
-  try {
-    const parsed = JSON.parse(response);
-    if (Array.isArray(parsed)) {
-      return parsed.map(item => {
-        const key = Object.keys(item)[0];
-        const value = item[key];
-        // Reconstruct the markdown list item
-        return `${key} ${value}`;
-      }).join('\n');
-    }
-  } catch (e) {
-    // Not a JSON string, or not in the expected format. Return as is.
-  }
-  return response;
-};
 
 export default function InsightsPage() {
   const { user } = useAuth();
@@ -54,7 +36,6 @@ export default function InsightsPage() {
     if (tab && ['report', 'health-score', 'event-planner', 'monthly-report'].includes(tab)) {
         setActiveTab(tab);
     } else {
-        // If tab is invalid or not present, set default and update URL
         router.replace('/dashboard/insights?tab=report', { scroll: false });
     }
   }, [searchParams, router]);
@@ -64,76 +45,73 @@ export default function InsightsPage() {
     router.push(`/dashboard/insights?tab=${newTab}`, { scroll: false });
   };
 
+  const fetchAllData = useCallback(async () => {
+    if (!user || !db) return;
+    setLoadingData(true);
+    try {
+      const userDocRef = doc(db, 'users', user.uid);
+      const userDoc = await getDoc(userDocRef);
+      if (userDoc.exists()) {
+        const data = userDoc.data() as UserProfile;
+        setUserProfile(data);
+        if (data.aiFinancialReport?.report) {
+          setReportData(data.aiFinancialReport);
+        }
+      }
+
+      const accountsSnapshot = await getDocs(collection(db, 'users', user.uid, 'accounts'));
+      const accountsData: Account[] = accountsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Account));
+
+      const transactionsList: Transaction[] = [];
+      const transactionPromises = accountsData.map(account => {
+          const transactionsQuery = query(collection(db!, 'users', user.uid, 'accounts', account.id, 'transactions'));
+          return getDocs(transactionsQuery).then(snapshot => {
+              snapshot.docs.forEach(doc => {
+                  const data = doc.data();
+                  transactionsList.push({
+                      id: doc.id,
+                      ...data,
+                      date: (data.date as Timestamp).toDate(),
+                      accountId: account.id // Critical: must include accountId for editing
+                  } as Transaction);
+              });
+          });
+      });
+
+      await Promise.all(transactionPromises);
+      setAllTransactions(transactionsList.sort((a, b) => b.date.getTime() - a.date.getTime()));
+    } catch (error) {
+      console.error("Error fetching data for insights:", error);
+      toast({ title: "Error", description: "Could not load data for AI Insights.", variant: "destructive" });
+    } finally {
+      setLoadingData(false);
+    }
+  }, [user, toast]);
 
   useEffect(() => {
-    if (!user || !db) return;
-
-    const fetchAllData = async () => {
-      setLoadingData(true);
-      try {
-        // Fetch user profile for budget and saved report
-        const userDocRef = doc(db, 'users', user.uid);
-        const userDoc = await getDoc(userDocRef);
-        if (userDoc.exists()) {
-          const data = userDoc.data() as UserProfile;
-          setUserProfile(data);
-          if (data.aiFinancialReport?.report) {
-            setReportData({
-              report: data.aiFinancialReport.report,
-              generatedAt: data.aiFinancialReport.generatedAt,
-            });
-          }
-        }
-
-        // Fetch all accounts
-        const accountsSnapshot = await getDocs(collection(db, 'users', user.uid, 'accounts'));
-        const accountsData: Account[] = accountsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Account));
-
-        // Fetch transactions for ALL accounts
-        const transactionsList: Transaction[] = [];
-        const transactionPromises = accountsData.map(account => {
-            const transactionsQuery = query(
-                collection(db, 'users', user.uid, 'accounts', account.id, 'transactions')
-            );
-            return getDocs(transactionsQuery).then(snapshot => {
-                snapshot.docs.forEach(doc => {
-                    const data = doc.data();
-                    transactionsList.push({
-                        id: doc.id,
-                        ...data,
-                        date: (data.date as Timestamp).toDate(),
-                    } as Transaction);
-                });
-            });
-        });
-
-        await Promise.all(transactionPromises);
-        setAllTransactions(transactionsList.sort((a, b) => b.date.getTime() - a.date.getTime()));
-      } catch (error) {
-        console.error("Error fetching data for insights:", error);
-        toast({ title: "Error", description: "Could not load data for AI Insights.", variant: "destructive" });
-      } finally {
-        setLoadingData(false);
-      }
-    };
-
     fetchAllData();
-  }, [user, toast]);
+  }, [fetchAllData]);
 
   const handleGenerateReport = async () => {
     if (!user || !db) return;
 
     setLoadingReport(true);
-    setReportData(null);
     try {
-      const transactionHistory = allTransactions
-        .map(t => `${format(new Date(t.date), 'yyyy-MM-dd')}: ${t.type === 'expense' ? '-' : '+'}₹${t.amount.toFixed(2)} for ${t.description}`)
+      // Summarize data for AI
+      const categoryTotals: Record<string, number> = {};
+      allTransactions.filter(t => t.type === 'expense').forEach(t => {
+        const cat = t.category || 'Other';
+        categoryTotals[cat] = (categoryTotals[cat] || 0) + t.amount;
+      });
+
+      const transactionSummary = Object.entries(categoryTotals)
+        .map(([cat, amount]) => `Category: ${cat}, Total Spent: ₹${amount.toFixed(2)}`)
         .join('\n');
       
       const budget = userProfile?.monthlyBudget ?? 0;
       
       const result = await getSpendingSuggestions({
-        transactionHistory,
+        transactionHistory: transactionSummary,
         currentBudget: budget,
       });
       
@@ -143,7 +121,6 @@ export default function InsightsPage() {
       };
       setReportData(newReportData);
 
-      // Save report to Firebase
       const userDocRef = doc(db, 'users', user.uid);
       await updateDoc(userDocRef, { aiFinancialReport: newReportData });
 
@@ -151,15 +128,14 @@ export default function InsightsPage() {
       console.error(error);
       toast({
         title: 'Error generating report',
-        description: 'Could not get AI report at this time. Please try again later.',
+        description: 'Could not get AI report at this time.',
         variant: 'destructive',
       });
     } finally {
-      setLoadingReport(false);
+      setLoadingReport(true); // Wait for state update
+      setTimeout(() => setLoadingReport(false), 500);
     }
   };
-
-  const displayReport = useMemo(() => formatAiResponse(reportData?.report || ''), [reportData]);
 
   return (
     <div className="space-y-8">
@@ -179,7 +155,7 @@ export default function InsightsPage() {
                   AI Financial Co-Pilot
                 </h1>
                 <p className="text-lg text-muted-foreground">
-                    Get personalized advice by letting our AI analyze your entire transaction history across all accounts.
+                    Your personalized financial advisor, powered by Google Gemini.
                 </p>
             </div>
             
@@ -192,69 +168,72 @@ export default function InsightsPage() {
                 ) : (
                     <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
                         <TabsList className="grid w-full grid-cols-4 max-w-4xl mx-auto h-12">
-                            <TabsTrigger value="report" className="h-full text-base gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                            <TabsTrigger value="report" className="h-full text-base gap-2">
                                 <FileText className="h-5 w-5" />
-                                Financial Report
+                                <span className="hidden sm:inline">Financial Report</span>
                             </TabsTrigger>
-                            <TabsTrigger value="health-score" className="h-full text-base gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                            <TabsTrigger value="health-score" className="h-full text-base gap-2">
                                 <HeartPulse className="h-5 w-5" />
-                                Health Score
+                                <span className="hidden sm:inline">Health Score</span>
                             </TabsTrigger>
-                            <TabsTrigger value="event-planner" className="h-full text-base gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                            <TabsTrigger value="event-planner" className="h-full text-base gap-2">
                                 <Map className="h-5 w-5" />
-                                Life Event Plan
+                                <span className="hidden sm:inline">Event Plan</span>
                             </TabsTrigger>
-                            <TabsTrigger value="monthly-report" className="h-full text-base gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                            <TabsTrigger value="monthly-report" className="h-full text-base gap-2">
                                 <CalendarDays className="h-5 w-5" />
-                                Monthly Report
+                                <span className="hidden sm:inline">Monthly Summary</span>
                             </TabsTrigger>
                         </TabsList>
+                        
                         <TabsContent value="report" className="flex flex-col items-center max-w-4xl mx-auto">
                           <div className="flex-grow min-h-[300px] relative overflow-hidden rounded-xl border-0 shadow-xl bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-blue-950 p-6 w-full">
                               <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5" />
                               <div className="relative h-full">
                                 {loadingReport ? (
-                                    <div className="flex flex-col items-center justify-center h-full text-center">
+                                    <div className="flex flex-col items-center justify-center h-full text-center py-12">
                                         <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
-                                        <p className="text-foreground">Analyzing your spending habits...</p>
-                                        <p className="text-xs text-muted-foreground mt-1">This may take a moment.</p>
+                                        <p className="text-foreground">Analyzing your financial history...</p>
                                     </div>
                                 ) : reportData ? (
-                                    <div className="text-sm text-foreground whitespace-pre-wrap leading-relaxed prose prose-sm dark:prose-invert max-w-none prose-headings:font-semibold prose-strong:font-semibold">
-                                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayReport}</ReactMarkdown>
+                                    <div className="text-sm text-foreground whitespace-pre-wrap leading-relaxed prose prose-sm dark:prose-invert max-w-none">
+                                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{reportData.report}</ReactMarkdown>
                                     </div>
                                 ) : (
-                                    <div className="text-center text-muted-foreground flex flex-col items-center justify-center h-full p-8">
+                                    <div className="text-center text-muted-foreground flex flex-col items-center justify-center h-full py-12">
                                         <FileText className="h-12 w-12 mb-4 text-primary/30" />
-                                        <h3 className="font-semibold text-lg text-foreground mb-2">Ready for your financial check-up?</h3>
-                                        <p className="max-w-md">Click the button below to get personalized advice based on your entire transaction history.</p>
+                                        <h3 className="font-semibold text-lg text-foreground mb-2">Generate Your Advisory Report</h3>
+                                        <p className="max-w-md">Our AI will analyze your spending patterns across all accounts to provide personalized recommendations.</p>
                                     </div>
                                 )}
                               </div>
                           </div>
                           <div className="flex flex-col items-center mt-6 gap-2">
-                            <Button onClick={handleGenerateReport} disabled={loadingReport || allTransactions.length === 0} className="w-full sm:w-auto" size="lg">
+                            <Button onClick={handleGenerateReport} disabled={loadingReport || allTransactions.length === 0} size="lg">
                                 {loadingReport ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-                                {loadingReport ? 'Analyzing...' : reportData ? 'Regenerate Full Financial Report' : 'Generate Full Financial Report'}
+                                {reportData ? 'Regenerate Financial Report' : 'Generate Financial Report'}
                             </Button>
-                            {reportData && reportData.generatedAt && (
+                            {reportData?.generatedAt && (
                               <p className="text-xs text-muted-foreground">
-                                Last generated: {format(new Date(reportData.generatedAt), "MMM d, yyyy 'at' p")}
+                                Last updated: {format(new Date(reportData.generatedAt), "MMM d, yyyy 'at' p")}
                               </p>
                             )}
                           </div>
                         </TabsContent>
+
                         <TabsContent value="health-score" className="max-w-4xl mx-auto">
                             <FinancialHealthScore 
                                 transactions={allTransactions}
                                 userProfile={userProfile}
                             />
                         </TabsContent>
+
                         <TabsContent value="event-planner">
                             <LifeEventPlanner />
                         </TabsContent>
+
                         <TabsContent value="monthly-report">
-                            <MonthlyReport allTransactions={allTransactions} />
+                            <MonthlyReport allTransactions={allTransactions} onRefresh={fetchAllData} />
                         </TabsContent>
                     </Tabs>
                 )}

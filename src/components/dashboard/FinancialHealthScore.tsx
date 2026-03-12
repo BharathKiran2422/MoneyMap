@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -31,7 +30,9 @@ export default function FinancialHealthScore({ transactions, userProfile }: { tr
 
         setLoading(true);
         try {
+            // Context mapping for AI
             const transactionHistory = transactions
+                .slice(0, 100) // Send recent 100 for context
                 .map(t => `${format(new Date(t.date), 'yyyy-MM-dd')}: ${t.type} of ${t.amount} for '${t.description}' in category '${t.category || 'Uncategorized'}'`)
                 .join('\n');
             
@@ -71,8 +72,7 @@ export default function FinancialHealthScore({ transactions, userProfile }: { tr
         return (
             <Card className="flex flex-col items-center justify-center min-h-[400px] text-center relative overflow-hidden border-0 shadow-xl bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-blue-950 p-6">
                 <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
-                <p className="text-lg font-semibold text-foreground">Calculating your financial health...</p>
-                <p className="text-muted-foreground mt-1">This may take a moment.</p>
+                <p className="text-lg font-semibold text-foreground">Analyzing your stability...</p>
             </Card>
         );
     }
@@ -81,11 +81,11 @@ export default function FinancialHealthScore({ transactions, userProfile }: { tr
         return (
             <Card className="flex flex-col items-center justify-center min-h-[400px] text-center relative overflow-hidden border-0 shadow-xl bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-blue-950 p-6">
                 <HeartPulse className="h-16 w-16 mb-4 text-primary/30" />
-                <h3 className="font-semibold text-xl text-foreground mb-2">Check Your Financial Health</h3>
-                <p className="max-w-md text-muted-foreground">Get a score from 1-100 that reflects your budgeting, saving, and spending habits, along with personalized tips for improvement.</p>
-                <Button onClick={handleCalculateScore} disabled={loading || transactions.length === 0} size="lg" className="mt-8">
+                <h3 className="font-semibold text-xl text-foreground mb-2">Financial Health Check</h3>
+                <p className="max-w-md text-muted-foreground">Evaluate your stability using the 50/30/20 rule. Get a score from 0-100 and personalized tips.</p>
+                <Button onClick={handleCalculateScore} disabled={transactions.length === 0} size="lg" className="mt-8">
                     <Sparkles className="mr-2 h-4 w-4" />
-                    Calculate My Health Score
+                    Calculate My Score
                 </Button>
             </Card>
         );
@@ -94,7 +94,7 @@ export default function FinancialHealthScore({ transactions, userProfile }: { tr
     return (
         <Card className="relative overflow-hidden border-0 shadow-xl bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-blue-950 p-6">
             <CardContent className="relative flex flex-col items-center text-center p-0">
-                <p className="text-xl font-semibold mb-2">Your Financial Health Score</p>
+                <p className="text-xl font-semibold mb-2">Financial Stability Score</p>
                 <div className="text-7xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent my-2">
                     {scoreData.score}
                     <span className="text-3xl text-muted-foreground">/100</span>
@@ -107,7 +107,7 @@ export default function FinancialHealthScore({ transactions, userProfile }: { tr
                 <div className="grid md:grid-cols-2 gap-8 w-full text-left my-8">
                     <div className="space-y-4">
                         <h4 className="font-semibold text-lg flex items-center gap-2 text-emerald-600">
-                            <TrendingUp />
+                            <TrendingUp className="h-5 w-5" />
                             What You're Doing Well
                         </h4>
                         <ul className="space-y-3">
@@ -121,7 +121,7 @@ export default function FinancialHealthScore({ transactions, userProfile }: { tr
                     </div>
                     <div className="space-y-4">
                         <h4 className="font-semibold text-lg flex items-center gap-2 text-amber-600">
-                            <TrendingDown />
+                            <TrendingDown className="h-5 w-5" />
                             Areas for Improvement
                         </h4>
                         <ul className="space-y-3">
@@ -136,13 +136,11 @@ export default function FinancialHealthScore({ transactions, userProfile }: { tr
                 </div>
 
                 <div className='flex flex-col items-center gap-2'>
-                    <Button onClick={handleCalculateScore} disabled={loading || transactions.length === 0} size="lg">
+                    <Button onClick={handleCalculateScore} size="lg">
                         <Sparkles className="mr-2 h-4 w-4" />
                         Recalculate Score
                     </Button>
-                    {scoreData && scoreData.generatedAt && (
-                        <p className="text-xs text-muted-foreground">Last calculated: {format(new Date(scoreData.generatedAt), "MMM d, yyyy 'at' p")}</p>
-                    )}
+                    <p className="text-xs text-muted-foreground">Last updated: {format(new Date(scoreData.generatedAt), "MMM d, yyyy 'at' p")}</p>
                 </div>
             </CardContent>
         </Card>

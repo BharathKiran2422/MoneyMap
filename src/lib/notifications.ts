@@ -1,8 +1,9 @@
 import { db } from '@/lib/firebase';
-import type { UserProfile } from '@/types';
-import { getDocs, query, where, Timestamp, doc, getDoc, updateDoc, addDoc, collection } from 'firebase/firestore';
-import { startOfMonth, endOfMonth, format, subMonths, startOfWeek, endOfWeek } from 'date-fns';
+import type { UserProfile, Transaction } from '@/types';
+import { getDocs, query, where, Timestamp, doc, getDoc, updateDoc, addDoc, collection, limit, orderBy } from 'firebase/firestore';
+import { startOfMonth, endOfMonth, format, subMonths, startOfDay, subDays } from 'date-fns';
 import { generateMonthlySummary } from '@/ai/flows/monthly-summary-notification';
+import { generateNotificationTip } from '@/ai/flows/generate-notification-tips';
 
 export async function checkBudgetAndCreateNotifications(userId: string) {
     if (!db) return;
@@ -11,17 +12,12 @@ export async function checkBudgetAndCreateNotifications(userId: string) {
         const userDocRef = doc(db, 'users', userId);
         const userDoc = await getDoc(userDocRef);
 
-        if (!userDoc.exists()) {
-            console.log("User doc does not exist for ID:", userId);
-            return;
-        };
+        if (!userDoc.exists()) return;
 
         const userData = userDoc.data() as UserProfile;
         const { monthlyBudget = 0 } = userData;
 
-        if (monthlyBudget <= 0) {
-            return; // No budget set, do nothing.
-        }
+        if (monthlyBudget <= 0) return;
 
         const now = new Date();
         const currentMonthStr = format(now, 'yyyy-MM');
@@ -29,6 +25,7 @@ export async function checkBudgetAndCreateNotifications(userId: string) {
         const end = endOfMonth(now);
 
         let totalExpenses = 0;
+        let recentExpenses: Transaction[] = [];
         
         const accountsSnapshot = await getDocs(collection(db, 'users', userId, 'accounts'));
 
@@ -37,37 +34,99 @@ export async function checkBudgetAndCreateNotifications(userId: string) {
                 collection(db, 'users', userId, 'accounts', accountDoc.id, 'transactions'),
                 where('date', '>=', Timestamp.fromDate(start)),
                 where('date', '<=', Timestamp.fromDate(end)),
-                where('type', '==', 'expense')
+                where('type', '==', 'expense'),
+                orderBy('date', 'desc')
             );
             
             const transactionsSnapshot = await getDocs(transactionsQuery);
             transactionsSnapshot.forEach(transactionDoc => {
-                totalExpenses += transactionDoc.data().amount;
+                const data = transactionDoc.data();
+                totalExpenses += data.amount;
+                if (recentExpenses.length < 5) {
+                    recentExpenses.push({ ...data, id: transactionDoc.id } as Transaction);
+                }
             });
         }
         
         const spendingPercentage = (totalExpenses / monthlyBudget) * 100;
         const budgetFormatted = `₹${monthlyBudget.toLocaleString('en-IN')}`;
+        const recentContext = recentExpenses.map(t => `${t.category}: ₹${t.amount}`).join(', ');
 
-        // Check for 100% threshold
+        // Logic for Thresholds
         if (spendingPercentage >= 100 && userData.lastNotification100Sent !== currentMonthStr) {
+            const tip = await generateNotificationTip({ context: 'Budget limit exceeded', recentSpending: recentContext });
             await addDoc(collection(db, 'users', userId, 'notifications'), {
-                message: `You have exceeded your monthly budget of ${budgetFormatted}.`,
+                message: `⚠️ Budget Exceeded: You've spent more than your ${budgetFormatted} limit. ${tip}`,
                 type: 'danger',
+                category: 'Alert',
                 read: false,
                 createdAt: Timestamp.now(),
             });
             await updateDoc(userDocRef, { lastNotification100Sent: currentMonthStr });
-        }
-        // Check for 90% threshold (else if to prevent sending both at the same time)
-        else if (spendingPercentage >= 90 && spendingPercentage < 100 && userData.lastNotification90Sent !== currentMonthStr) {
+        } else if (spendingPercentage >= 90 && userData.lastNotification90Sent !== currentMonthStr) {
+            const tip = await generateNotificationTip({ context: '90% budget reached', recentSpending: recentContext });
             await addDoc(collection(db, 'users', userId, 'notifications'), {
-                message: `You have spent over 90% of your ${budgetFormatted} monthly budget.`,
+                message: `⚠️ Budget Alert: You've used 90% of your ${budgetFormatted} budget. ${tip}`,
                 type: 'warning',
+                category: 'Alert',
                 read: false,
                 createdAt: Timestamp.now(),
             });
             await updateDoc(userDocRef, { lastNotification90Sent: currentMonthStr });
+        } else if (spendingPercentage >= 75 && userData.lastNotification75Sent !== currentMonthStr) {
+            const tip = await generateNotificationTip({ context: '75% budget reached', recentSpending: recentContext });
+            await addDoc(collection(db, 'users', userId, 'notifications'), {
+                message: `💡 Budget Advice: You've reached 75% of your budget. ${tip}`,
+                type: 'info',
+                category: 'Advice',
+                read: false,
+                createdAt: Timestamp.now(),
+            });
+            await updateDoc(userDocRef, { lastNotification75Sent: currentMonthStr });
+        }
+
+        // Spending Spike Detection
+        const todayStart = startOfDay(now);
+        let todaySpending = 0;
+        for (const accountDoc of accountsSnapshot.docs) {
+            const todayQuery = query(
+                collection(db, 'users', userId, 'accounts', accountDoc.id, 'transactions'),
+                where('date', '>=', Timestamp.fromDate(todayStart)),
+                where('type', '==', 'expense')
+            );
+            const todaySnap = await getDocs(todayQuery);
+            todaySnap.forEach(d => todaySpending += d.data().amount);
+        }
+
+        const daysPassed = now.getDate();
+        const dailyAverage = daysPassed > 1 ? (totalExpenses - todaySpending) / (daysPassed - 1) : monthlyBudget / 30;
+        
+        if (todaySpending > dailyAverage * 2.5 && todaySpending > 1000) {
+            await addDoc(collection(db, 'users', userId, 'notifications'), {
+                message: `📈 Spending Spike: Today's expenses (₹${todaySpending.toLocaleString('en-IN')}) are unusually high. Keep an eye on your discretionary spending.`,
+                type: 'warning',
+                category: 'Alert',
+                read: false,
+                createdAt: Timestamp.now(),
+            });
+        }
+
+        // --- NEW: Dynamic Payment Reminders ---
+        // Checks if specific dates are near
+        const dayOfMonth = now.getDate();
+        if (dayOfMonth >= 25 || dayOfMonth <= 5) {
+            // Check if we've sent a rent reminder this window
+            const reminderKey = `rent_rem_${currentMonthStr}`;
+            if (userData.lastRentReminderSent !== currentMonthStr) {
+                await addDoc(collection(db, 'users', userId, 'notifications'), {
+                    message: `🏠 Rent Reminder: It's near the end/start of the month. Don't forget to record your rent payment!`,
+                    type: 'info',
+                    category: 'Reminder',
+                    read: false,
+                    createdAt: Timestamp.now(),
+                });
+                await updateDoc(userDocRef, { lastRentReminderSent: currentMonthStr });
+            }
         }
 
     } catch (error) {
@@ -80,10 +139,7 @@ export async function sendMonthlySummaryNotificationIfNeeded(userId: string) {
 
     try {
         const now = new Date();
-        // Only run on the first day of the month
-        if (now.getDate() !== 1) {
-            return;
-        }
+        if (now.getDate() !== 1) return;
 
         const lastMonth = subMonths(now, 1);
         const lastMonthStr = format(lastMonth, 'yyyy-MM');
@@ -94,7 +150,6 @@ export async function sendMonthlySummaryNotificationIfNeeded(userId: string) {
         if (!userDoc.exists()) return;
         const userData = userDoc.data() as UserProfile;
 
-        // Check if summary for last month was already sent
         if (userData.lastMonthlySummarySent === lastMonthStr || !userData.monthlyBudget || userData.monthlyBudget <= 0) {
             return;
         }
@@ -127,11 +182,11 @@ export async function sendMonthlySummaryNotificationIfNeeded(userId: string) {
         
         const monthParam = format(lastMonth, 'yyyy-MM');
         const link = `/dashboard/insights?tab=monthly-report&month=${monthParam}`;
-        const fullMessage = `${message} Click here to view your detailed monthly report.`;
 
         await addDoc(collection(db, 'users', userId, 'notifications'), {
-            message: fullMessage,
+            message: `📊 Monthly Summary: ${message}`,
             type: 'info',
+            category: 'Advice',
             read: false,
             createdAt: Timestamp.now(),
             link: link,

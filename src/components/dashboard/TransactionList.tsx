@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { Transaction } from '@/types';
+import { Transaction, Account } from '@/types';
 import {
   Table,
   TableBody,
@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { MoreVertical, Pencil, Trash2, ChevronLeft, ChevronRight, ArrowUpDown, RotateCcw, Upload, CalendarIcon } from 'lucide-react';
+import { MoreVertical, Pencil, Trash2, ChevronLeft, ChevronRight, ArrowUpDown, RotateCcw, Upload, CalendarIcon, Search, Filter } from 'lucide-react';
 import { format, startOfDay, endOfDay, startOfMonth, endOfMonth } from 'date-fns';
 import {
     DropdownMenu,
@@ -36,6 +36,9 @@ import Papa from 'papaparse';
 import { DateRange } from 'react-day-picker';
 import { Calendar } from '@/components/ui/calendar';
 import { Separator } from '@/components/ui/separator';
+import { db } from '@/lib/firebase';
+import { collection, getDocs } from 'firebase/firestore';
+import { useAuth } from '@/lib/auth';
 
 
 type Props = {
@@ -47,6 +50,7 @@ type Props = {
 const TRANSACTIONS_PER_PAGE = 10;
 
 export default function TransactionList({ transactions, onEdit, onDelete }: Props) {
+    const { user } = useAuth();
     const [currentPage, setCurrentPage] = useState(1);
     const [searchQuery, setSearchQuery] = useState('');
     const [categoryFilter, setCategoryFilter] = useState('all');
@@ -55,6 +59,17 @@ export default function TransactionList({ transactions, onEdit, onDelete }: Prop
     const { toast } = useToast();
     const [customDateRange, setCustomDateRange] = useState<DateRange | undefined>();
     const [exportPopoverOpen, setExportPopoverOpen] = useState(false);
+    const [accountsMap, setAccountsMap] = useState<Record<string, string>>({});
+
+    useEffect(() => {
+        if (user) {
+            getDocs(collection(db!, 'users', user.uid, 'accounts')).then(snap => {
+                const map: Record<string, string> = {};
+                snap.docs.forEach(d => map[d.id] = d.data().name);
+                setAccountsMap(map);
+            });
+        }
+    }, [user]);
 
     const uniqueCategories = useMemo(() => {
         const categories = new Set(transactions.map(t => t.category).filter(Boolean) as string[]);
@@ -103,40 +118,15 @@ export default function TransactionList({ transactions, onEdit, onDelete }: Prop
     );
     
     useEffect(() => {
-        // Reset to first page if filters change
         setCurrentPage(1);
     }, [searchQuery, categoryFilter, typeFilter, sortConfig]);
     
-    useEffect(() => {
-        if (paginatedTransactions.length === 0 && currentPage > 1) {
-            setCurrentPage(currentPage - 1);
-        }
-    }, [paginatedTransactions.length, currentPage, filteredAndSortedTransactions]);
-
-    const handlePrevPage = () => {
-        setCurrentPage((prev) => Math.max(prev - 1, 1));
-    };
-
-    const handleNextPage = () => {
-        setCurrentPage((prev) => Math.min(prev + 1, totalPages));
-    };
+    const handlePrevPage = () => setCurrentPage((prev) => Math.max(prev - 1, 1));
+    const handleNextPage = () => setCurrentPage((prev) => Math.min(prev + 1, totalPages));
     
     const formatCurrency = (amount: number) => {
-        return new Intl.NumberFormat('en-IN', {
-          style: 'currency',
-          currency: 'INR',
-        }).format(amount);
+        return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(amount);
     };
-
-    const getSortLabel = () => {
-        const labels: { [key: string]: string } = {
-            date_desc: 'Date: Newest',
-            date_asc: 'Date: Oldest',
-            amount_desc: 'Amount: High to Low',
-            amount_asc: 'Amount: Low to High',
-        };
-        return labels[`${sortConfig.key}_${sortConfig.direction}`] || 'Sort by';
-    }
 
     const handleClearFilters = () => {
         setSearchQuery('');
@@ -172,10 +162,7 @@ export default function TransactionList({ transactions, onEdit, onDelete }: Prop
         }
     
         if (transactionsToExport.length === 0) {
-            toast({
-                title: "No data to export",
-                description: "There are no transactions in the selected period.",
-            });
+            toast({ title: "No data to export", description: "There are no transactions in the selected period." });
             return;
         }
     
@@ -185,127 +172,39 @@ export default function TransactionList({ transactions, onEdit, onDelete }: Prop
             Category: t.category || 'N/A',
             Type: t.type,
             Amount: t.amount,
+            Account: t.accountId ? (accountsMap[t.accountId] || 'Unknown') : 'N/A'
         }));
 
-        const csvData = Papa.unparse({
-            fields: ["Date", "Description", "Category", "Type", "Amount"],
-            data: dataForCsv,
-        });
-    
+        const csvData = Papa.unparse(dataForCsv);
         const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
-        const url = URL.createObjectURL(blob);
-        link.setAttribute('href', url);
+        link.href = URL.createObjectURL(blob);
         link.setAttribute('download', fileName);
-        link.style.visibility = 'hidden';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        URL.revokeObjectURL(url);
     
         toast({ title: 'Export successful', description: 'Your transaction report has been downloaded.' });
-        
-        if (period === 'custom') {
-            setCustomDateRange(undefined);
-        }
         setExportPopoverOpen(false);
     };
 
   return (
-    <Card className="relative overflow-hidden border-0 shadow-xl bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-blue-950">
-      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5" />
-      <CardHeader className="relative flex flex-col gap-4">
-        <div className="flex flex-row items-start justify-between">
-            <div>
-                <CardTitle className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                  Transaction Log
-                </CardTitle>
-                <CardDescription>Search, filter, and sort all your income and expenses.</CardDescription>
-            </div>
-            <Popover open={exportPopoverOpen} onOpenChange={setExportPopoverOpen}>
-                <PopoverTrigger asChild>
-                    <Button variant="outline" size="icon">
-                        <Upload className="h-4 w-4" />
-                        <span className="sr-only">Export Transactions</span>
-                    </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-80" align="end">
-                    <div className="space-y-4 p-2">
-                        <p className="text-sm font-medium">Export as CSV</p>
-                        <div className="space-y-2">
-                            <Button variant="ghost" className="w-full justify-start" onClick={() => handleExport('current-month')}>
-                                This Month's Report
-                            </Button>
-                            <Button variant="ghost" className="w-full justify-start" onClick={() => handleExport('all-time')}>
-                                All Transactions
-                            </Button>
-                        </div>
-                        <Separator />
-                        <div className="space-y-2">
-                            <p className="text-sm font-medium">Custom Date Range</p>
-                            <div className="grid gap-2">
-                                <Popover>
-                                <PopoverTrigger asChild>
-                                    <Button
-                                    id="date"
-                                    variant={"outline"}
-                                    className={cn(
-                                        "w-full justify-start text-left font-normal",
-                                        !customDateRange && "text-muted-foreground"
-                                    )}
-                                    >
-                                    <CalendarIcon className="mr-2 h-4 w-4" />
-                                    {customDateRange?.from ? (
-                                        customDateRange.to ? (
-                                        <>
-                                            {format(customDateRange.from, "LLL dd, y")} -{" "}
-                                            {format(customDateRange.to, "LLL dd, y")}
-                                        </>
-                                        ) : (
-                                        format(customDateRange.from, "LLL dd, y")
-                                        )
-                                    ) : (
-                                        <span>Pick a date range</span>
-                                    )}
-                                    </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-auto p-0" align="end">
-                                    <Calendar
-                                    initialFocus
-                                    mode="range"
-                                    defaultMonth={customDateRange?.from}
-                                    selected={customDateRange}
-                                    onSelect={setCustomDateRange}
-                                    numberOfMonths={2}
-                                    />
-                                </PopoverContent>
-                                </Popover>
-                            </div>
-                            <Button
-                                className="w-full"
-                                disabled={!customDateRange?.from || !customDateRange?.to}
-                                onClick={() => handleExport('custom', customDateRange)}
-                            >
-                                Download Custom Report
-                            </Button>
-                        </div>
-                    </div>
-                </PopoverContent>
-            </Popover>
-        </div>
-        <div className="flex flex-col md:flex-row gap-4 items-center">
-            <div className="w-full md:w-auto md:flex-1">
+    <Card className="border-0 shadow-lg overflow-hidden bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
+      <CardHeader className="pb-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="relative flex-1 max-w-sm">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                    placeholder="Search descriptions..."
+                    placeholder="Find a transaction..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full md:max-w-xs"
+                    className="pl-9 bg-background/50 border-slate-200 dark:border-slate-800"
                 />
             </div>
-            <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
-                <Select value={typeFilter} onValueChange={(value) => setTypeFilter(value as 'all' | 'income' | 'expense')}>
-                    <SelectTrigger className="w-full sm:w-[130px]">
-                        <SelectValue placeholder="Filter by type" />
+            <div className="flex flex-wrap items-center gap-2">
+                <Select value={typeFilter} onValueChange={(value) => setTypeFilter(value as any)}>
+                    <SelectTrigger className="w-[120px] bg-background/50">
+                        <SelectValue placeholder="All Types" />
                     </SelectTrigger>
                     <SelectContent>
                         <SelectItem value="all">All Types</SelectItem>
@@ -314,179 +213,124 @@ export default function TransactionList({ transactions, onEdit, onDelete }: Prop
                     </SelectContent>
                 </Select>
                 <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                    <SelectTrigger className="w-full sm:w-[180px]">
-                    <SelectValue placeholder="Filter by category" />
+                    <SelectTrigger className="w-[160px] bg-background/50">
+                        <SelectValue placeholder="All Categories" />
                     </SelectTrigger>
                     <SelectContent>
-                    <SelectItem value="all">All Categories</SelectItem>
-                    {uniqueCategories.map(cat => <SelectItem key={cat} value={cat}>{cat}</SelectItem>)}
+                        <SelectItem value="all">All Categories</SelectItem>
+                        {uniqueCategories.map(cat => <SelectItem key={cat} value={cat}>{cat}</SelectItem>)}
                     </SelectContent>
                 </Select>
-                <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                        <Button variant="outline" className="w-full sm:w-auto justify-start">
-                        <ArrowUpDown className="mr-2 h-4 w-4" />
-                        <span className="truncate">{getSortLabel()}</span>
-                        </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => setSortConfig({ key: 'date', direction: 'desc' })}>Date: Newest</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => setSortConfig({ key: 'date', direction: 'asc' })}>Date: Oldest</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => setSortConfig({ key: 'amount', direction: 'desc' })}>Amount: High to Low</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => setSortConfig({ key: 'amount', direction: 'asc' })}>Amount: Low to High</DropdownMenuItem>
-                    </DropdownMenuContent>
-                </DropdownMenu>
-                <Button variant="ghost" onClick={handleClearFilters} size="icon" title="Clear Filters">
+                <Button variant="ghost" size="icon" onClick={handleClearFilters} className="text-muted-foreground">
                     <RotateCcw className="h-4 w-4" />
                 </Button>
+                <Separator orientation="vertical" className="h-8 mx-1 hidden sm:block" />
+                <Popover open={exportPopoverOpen} onOpenChange={setExportPopoverOpen}>
+                    <PopoverTrigger asChild>
+                        <Button variant="outline" className="gap-2">
+                            <Upload className="h-4 w-4" />
+                            Export
+                        </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-64 p-2" align="end">
+                        <Button variant="ghost" className="w-full justify-start text-sm" onClick={() => handleExport('current-month')}>Current Month</Button>
+                        <Button variant="ghost" className="w-full justify-start text-sm" onClick={() => handleExport('all-time')}>All Time</Button>
+                    </PopoverContent>
+                </Popover>
             </div>
         </div>
       </CardHeader>
       
-      <CardContent className="relative p-0">
-        {/* Desktop View */}
-        <div className='hidden md:block min-h-[620px] px-6'>
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
             <Table>
-            <TableHeader>
-                <TableRow>
-                <TableHead>Description</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-                <TableHead className="w-[50px] text-right">Actions</TableHead>
-                </TableRow>
-            </TableHeader>
-            <TableBody>
-                {paginatedTransactions.length > 0 ? (
-                paginatedTransactions.map((t) => (
-                    <TableRow key={t.id} className="hover:bg-white/5 dark:hover:bg-black/5">
-                    <TableCell className="font-medium">{t.description}</TableCell>
-                    <TableCell>
-                        <span className={cn('px-2.5 py-0.5 text-xs font-semibold rounded-full capitalize', {
-                            'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300': t.type === 'income',
-                            'bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300': t.type === 'expense',
-                        })}>
-                            {t.type}
-                        </span>
-                    </TableCell>
-                    <TableCell>{t.category || '-'}</TableCell>
-                    <TableCell>{format(new Date(t.date), 'MMM d, yyyy')}</TableCell>
-                    <TableCell className={cn('text-right font-semibold', {
-                        'text-emerald-600': t.type === 'income',
-                        'text-rose-600': t.type === 'expense'
-                    })}>
-                        {t.type === 'income' ? '+' : '-'} {formatCurrency(t.amount)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" className="h-8 w-8 p-0">
-                            <span className="sr-only">Open menu</span>
-                            <MoreVertical className="h-4 w-4" />
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => onEdit(t)}>
-                                <Pencil className="mr-2 h-4 w-4" />
-                                Edit
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => onDelete(t.id)} className="text-destructive focus:text-destructive">
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                Delete
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                        </DropdownMenu>
-                    </TableCell>
-                    </TableRow>
-                ))
-                ) : (
+                <TableHeader className="bg-slate-50 dark:bg-slate-800/50">
                     <TableRow>
-                        <TableCell colSpan={6} className="text-center h-[560px]">No transactions found.</TableCell>
+                        <TableHead className="w-[250px]">Description</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Account</TableHead>
+                        <TableHead className="cursor-pointer hover:text-primary transition-colors" onClick={() => setSortConfig({ key: 'date', direction: sortConfig.direction === 'asc' ? 'desc' : 'asc' })}>
+                            <div className="flex items-center gap-1">
+                                Date
+                                <ArrowUpDown className="h-3 w-3" />
+                            </div>
+                        </TableHead>
+                        <TableHead className="text-right cursor-pointer hover:text-primary transition-colors" onClick={() => setSortConfig({ key: 'amount', direction: sortConfig.direction === 'asc' ? 'desc' : 'asc' })}>
+                            <div className="flex items-center justify-end gap-1">
+                                Amount
+                                <ArrowUpDown className="h-3 w-3" />
+                            </div>
+                        </TableHead>
+                        <TableHead className="w-[50px]"></TableHead>
                     </TableRow>
-                )}
-            </TableBody>
-            </Table>
-        </div>
-
-        {/* Mobile View */}
-        <div className="md:hidden p-4 min-h-[500px] flex flex-col">
-            <div className="space-y-4 flex-grow">
-                {paginatedTransactions.length > 0 ? (
-                    paginatedTransactions.map((t) => (
-                        <Card key={t.id} className="p-4 flex justify-between items-start bg-white/30 dark:bg-slate-800/30 backdrop-blur-sm border border-slate-200/30 dark:border-slate-700/30 hover:shadow-md transition-shadow">
-                            <div className="flex-1 space-y-2">
-                                <p className="font-medium truncate">{t.description}</p>
-                                <div className='flex flex-wrap gap-2 items-center'>
-                                  <span className={cn('px-2 py-0.5 text-xs font-semibold rounded-full capitalize', {
-                                      'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300': t.type === 'income',
-                                      'bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300': t.type === 'expense',
-                                  })}>
-                                      {t.type}
-                                  </span>
-                                  {t.category && <Badge variant="secondary" className="font-normal">{t.category}</Badge>}
-                                </div>
-                                <p className="text-sm text-muted-foreground pt-1">{format(new Date(t.date), 'MMM d, yyyy')}</p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <p className={cn('font-semibold text-right', {
-                                    'text-emerald-600': t.type === 'income',
-                                    'text-rose-600': t.type === 'expense'
-                                })}>
+                </TableHeader>
+                <TableBody>
+                    {paginatedTransactions.length > 0 ? (
+                        paginatedTransactions.map((t) => (
+                            <TableRow key={t.id} className="group border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-800/20">
+                                <TableCell className="font-medium">{t.description}</TableCell>
+                                <TableCell>
+                                    <Badge className={cn("font-normal", t.type === 'income' ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" : "bg-rose-500/10 text-rose-600 border-rose-500/20")}>
+                                        {t.type}
+                                    </Badge>
+                                </TableCell>
+                                <TableCell>
+                                    <span className="text-sm text-muted-foreground">{t.category || 'Other'}</span>
+                                </TableCell>
+                                <TableCell>
+                                    <span className="text-sm">{t.accountId ? (accountsMap[t.accountId] || 'Loading...') : '-'}</span>
+                                </TableCell>
+                                <TableCell className="text-sm text-muted-foreground">
+                                    {format(new Date(t.date), 'MMM d, yyyy')}
+                                </TableCell>
+                                <TableCell className={cn("text-right font-bold", t.type === 'income' ? "text-emerald-600" : "text-rose-600")}>
                                     {t.type === 'income' ? '+' : '-'} {formatCurrency(t.amount)}
-                                </p>
-                                <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                        <Button variant="ghost" className="h-8 w-8 p-0">
-                                            <span className="sr-only">Open menu</span>
-                                            <MoreVertical className="h-4 w-4" />
-                                        </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                        <DropdownMenuItem onClick={() => onEdit(t)}>
-                                            <Pencil className="mr-2 h-4 w-4" />
-                                            Edit
-                                        </DropdownMenuItem>
-                                        <DropdownMenuItem onClick={() => onDelete(t.id)} className="text-destructive focus:text-destructive">
-                                            <Trash2 className="mr-2 h-4 w-4" />
-                                            Delete
-                                        </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                </DropdownMenu>
-                            </div>
-                        </Card>
-                    ))
-                ) : (
-                    <div className="text-center h-full flex items-center justify-center text-muted-foreground">
-                        <p>No transactions found.</p>
-                    </div>
-                )}
-            </div>
+                                </TableCell>
+                                <TableCell>
+                                    <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                            <Button variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <MoreVertical className="h-4 w-4" />
+                                            </Button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="end" className="w-32">
+                                            <DropdownMenuItem onClick={() => onEdit(t)}>
+                                                <Pencil className="h-4 w-4 mr-2" />
+                                                Edit
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem className="text-rose-600" onClick={() => onDelete(t.id)}>
+                                                <Trash2 className="h-4 w-4 mr-2" />
+                                                Delete
+                                            </DropdownMenuItem>
+                                        </DropdownMenuContent>
+                                    </DropdownMenu>
+                                </TableCell>
+                            </TableRow>
+                        ))
+                    ) : (
+                        <TableRow>
+                            <TableCell colSpan={7} className="h-64 text-center">
+                                <div className="flex flex-col items-center justify-center text-muted-foreground">
+                                    <Filter className="h-8 w-8 mb-2 opacity-20" />
+                                    <p>No transactions match your criteria.</p>
+                                </div>
+                            </TableCell>
+                        </TableRow>
+                    )}
+                </TableBody>
+            </Table>
         </div>
       </CardContent>
       {totalPages > 1 && (
-        <CardFooter className="relative flex items-center justify-between border-t border-border/50 px-6 py-4">
-            <div className="text-sm text-muted-foreground">
-                Page {currentPage} of {totalPages}
-            </div>
-            <div className="flex items-center space-x-2">
-                <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handlePrevPage}
-                    disabled={currentPage === 1}
-                >
-                    <ChevronLeft className="mr-2 h-4 w-4" />
-                    Previous
+        <CardFooter className="px-6 py-4 flex items-center justify-between border-t bg-slate-50/30 dark:bg-slate-900/30">
+            <p className="text-sm text-muted-foreground">Showing {(currentPage - 1) * TRANSACTIONS_PER_PAGE + 1} to {Math.min(currentPage * TRANSACTIONS_PER_PAGE, filteredAndSortedTransactions.length)} of {filteredAndSortedTransactions.length}</p>
+            <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={handlePrevPage} disabled={currentPage === 1}>
+                    <ChevronLeft className="h-4 w-4" />
                 </Button>
-                <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleNextPage}
-                    disabled={currentPage === totalPages}
-                >
-                    Next
-                    <ChevronRight className="ml-2 h-4 w-4" />
+                <Button variant="outline" size="sm" onClick={handleNextPage} disabled={currentPage === totalPages}>
+                    <ChevronRight className="h-4 w-4" />
                 </Button>
             </div>
         </CardFooter>

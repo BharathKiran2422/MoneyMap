@@ -1,4 +1,4 @@
-# **App Name**: Fiscal Flow
+# **App Name**: MoneyMap
 
 ## Core Features:
 

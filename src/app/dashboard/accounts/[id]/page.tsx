@@ -1,5 +1,3 @@
-
-// src/app/dashboard/accounts/[id]/page.tsx
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -8,13 +6,15 @@ import { useAuth } from '@/lib/auth';
 import {
   collection,
   doc,
-  getDoc,
   query,
   orderBy,
   onSnapshot,
   updateDoc,
   deleteDoc,
   Timestamp,
+  getDoc,
+  getDocs,
+  setDoc,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useToast } from '@/hooks/use-toast';
@@ -26,7 +26,6 @@ import SpendingChart from '@/components/dashboard/SpendingChart';
 import SmartSuggestions from '@/components/dashboard/SmartSuggestions';
 import TransactionList from '@/components/dashboard/TransactionList';
 import TransactionModal from '@/components/dashboard/TransactionModal';
-import { categorizeTransaction } from '@/ai/flows/categorize-transaction';
 import Link from 'next/link';
 import { checkBudgetAndCreateNotifications } from '@/lib/notifications';
 
@@ -50,7 +49,6 @@ export default function AccountDetailsPage() {
   useEffect(() => {
     if (!user || !db || !accountId) return;
 
-    // Fetch account details
     const accountDocRef = doc(db, 'users', user.uid, 'accounts', accountId);
     const unsubscribeAccount = onSnapshot(accountDocRef, (doc) => {
       if (doc.exists()) {
@@ -61,7 +59,6 @@ export default function AccountDetailsPage() {
       }
     });
 
-    // Fetch transactions for the account
     const q = query(
       collection(db, 'users', user.uid, 'accounts', accountId, 'transactions'),
       orderBy('date', 'desc')
@@ -74,13 +71,10 @@ export default function AccountDetailsPage() {
           id: doc.id,
           ...data,
           date: (data.date as Timestamp).toDate(),
+          accountId: accountId
         } as Transaction;
       });
       setTransactions(transactionsData);
-      setLoading(false);
-    }, (error) => {
-      console.error("Error fetching transactions: ", error);
-      toast({ title: "Error", description: "Could not fetch transactions.", variant: "destructive" });
       setLoading(false);
     });
 
@@ -90,24 +84,35 @@ export default function AccountDetailsPage() {
     };
   }, [user, db, accountId, router, toast]);
 
-  const handleUpdateTransaction = async (updatedTransaction: Transaction) => {
+  const handleUpdateTransaction = async (updated: Transaction) => {
     if (!user || !db || !accountId) return;
-    const { id, ...data } = updatedTransaction;
     try {
-      const { category } = await categorizeTransaction({
-        description: data.description,
-        type: data.type,
-      });
-      const docRef = doc(db, 'users', user.uid, 'accounts', accountId, 'transactions', id);
-      await updateDoc(docRef, {
-        ...data,
-        category,
-        date: Timestamp.fromDate(data.date)
-      });
+      const { id, accountId: targetAccountId, ...data } = updated;
+      
+      const payload = {
+          ...data,
+          date: Timestamp.fromDate(data.date),
+          updatedAt: Timestamp.now(),
+          lastModifiedBy: user.uid
+      };
+
+      // Handle moving transaction to different account if necessary
+      if (targetAccountId && targetAccountId !== accountId) {
+          const oldRef = doc(db, 'users', user.uid, 'accounts', accountId, 'transactions', id);
+          const newRef = doc(db, 'users', user.uid, 'accounts', targetAccountId, 'transactions', id);
+          
+          await setDoc(newRef, payload);
+          await deleteDoc(oldRef);
+      } else {
+          const docRef = doc(db, 'users', user.uid, 'accounts', accountId, 'transactions', id);
+          await updateDoc(docRef, payload);
+      }
+      
+      toast({ title: "Success", description: "Transaction updated." });
       await checkBudgetAndCreateNotifications(user.uid);
     } catch (error) {
-      console.error("Error updating transaction: ", error);
-      toast({ title: "Error", description: "Could not update transaction.", variant: "destructive" });
+      console.error(error);
+      toast({ title: "Error", description: "Update failed.", variant: "destructive" });
     }
   };
   
@@ -116,16 +121,12 @@ export default function AccountDetailsPage() {
     try {
       await deleteDoc(doc(db, 'users', user.uid, 'accounts', accountId, 'transactions', id));
       await checkBudgetAndCreateNotifications(user.uid);
+      toast({ title: "Deleted", description: "Transaction removed." });
     } catch (error) {
-      console.error("Error deleting transaction: ", error);
-      toast({ title: "Error", description: "Could not delete transaction.", variant: "destructive" });
+      console.error(error);
+      toast({ title: "Error", description: "Delete failed.", variant: "destructive" });
     }
   };
-
-  const openEditModal = (transaction: Transaction) => {
-    setEditingTransaction(transaction);
-    setIsTransactionModalOpen(true);
-  }
 
   if (loading) {
     return (
@@ -140,33 +141,39 @@ export default function AccountDetailsPage() {
       <div className="flex items-center justify-between">
         <Button variant="outline" onClick={() => router.push('/dashboard')}>
           <ArrowLeft className="mr-2 h-4 w-4" />
-          Back to Dashboard
+          Back
         </Button>
         <h1 className="text-2xl font-bold">{account?.name} Details</h1>
         <Button asChild>
           <Link href={`/dashboard/accounts/${accountId}/new-transaction`}>
             <PlusCircle className="mr-2 h-4 w-4" />
-            Add Transaction
+            New Entry
           </Link>
         </Button>
       </div>
       
-      <>
-        <AccountOverview
-          transactions={transactions}
-          title="Account Snapshot"
-          description={`A summary of financial activity for your ${account?.name || '...'} account.`}
-        />
-        <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-          <SpendingChart transactions={transactions} />
-          <SmartSuggestions transactions={transactions} account={account} />
-        </div>
+      <AccountOverview
+        transactions={transactions}
+        title="Account Snapshot"
+        description={`Summary for your ${account?.name} account.`}
+      />
+      
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+        <SpendingChart transactions={transactions} />
+        <SmartSuggestions transactions={transactions} account={account} />
+      </div>
+
+      <div className="space-y-4">
+        <h2 className="text-xl font-bold">Account Ledger</h2>
         <TransactionList 
           transactions={transactions} 
-          onEdit={openEditModal}
+          onEdit={(t) => {
+              setEditingTransaction(t);
+              setIsTransactionModalOpen(true);
+          }}
           onDelete={handleDeleteTransaction}
         />
-      </>
+      </div>
 
       <TransactionModal
         isOpen={isTransactionModalOpen}

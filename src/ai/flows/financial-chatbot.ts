@@ -1,66 +1,45 @@
 'use server';
 
 /**
- * @fileOverview A financial chatbot that answers user questions based on their transaction history.
- *
- * - financialChatbot - A flow that generates responses to user queries.
- * - FinancialChatbotInput - The input type for the financialChatbot function.
+ * @fileOverview Conversational assistant for financial queries.
  */
 
-import { ai } from '@/ai/genkit';
+import { ai, callGeminiApi } from '@/ai/genkit';
 import { z } from 'genkit';
 
 const FinancialChatbotInputSchema = z.object({
-  question: z.string().describe('The user question about their finances.'),
-  transactionHistory: z
-    .string()
-    .describe(
-      'A string containing the transaction history of the user across all accounts. Each transaction should be on a new line, including date, description, type, amount, and category.'
-    ),
-  userProfile: z.string().describe('A JSON string of the user profile, including name and budget.'),
+  question: z.string().describe('The user question.'),
+  transactionHistory: z.string().describe('Contextual transaction history.'),
+  userProfile: z.string().describe('User profile summary.'),
 });
 export type FinancialChatbotInput = z.infer<typeof FinancialChatbotInputSchema>;
 
 export async function financialChatbot(input: FinancialChatbotInput): Promise<string> {
     const { question, transactionHistory, userProfile } = input;
-    const currentDate = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD format
+    const currentDate = new Date().toLocaleDateString('en-IN');
 
-    const systemPrompt = `You are "MoneyMap," an expert financial assistant chatbot for a user in India. Your personality is professional, direct, and helpful.
+    const prompt = `You are "MoneyMap AI," an expert personal finance assistant for a user in India. 
 
-Your primary goal is to answer financial questions based ONLY on the provided context (transaction history and user profile).
-- The current date is ${currentDate}.
-- When asked about timeframes, interpret them as follows:
-  - "this month": The current calendar month.
-  - "last month": The previous calendar month.
-  - "last 30 days": The 30 days immediately preceding today.
-  - "this week": The current week, from Sunday to Saturday.
-  - "last week": The previous week, from Sunday to Saturday.
-- If the user asks a financial question, provide a direct answer based on the data. Do not add any conversational filler.
-- If the user provides a simple greeting (like "hello", "hi") or expresses gratitude ("thank you", "thanks"), respond with a brief, polite acknowledgment (e.g., "You're welcome! How can I help with your finances?").
-- Do not make up information or provide financial advice beyond what can be inferred from the data.
-- Do not suggest other apps or external tools.
-- When analyzing spending patterns, consider the Indian context (INR currency).
-- Always format monetary amounts in INR and provide clear, actionable insights for financial questions.
-
-**User Profile Context:**
-${userProfile}
-
-**Transaction History Context:**
+**Context:**
+Date: ${currentDate}
+User Profile: ${userProfile}
+Transaction Data:
 ${transactionHistory}
 
-User question: "${question}"
+**Rules:**
+1. Answer based ONLY on the provided transaction data.
+2. If the user asks for "top expenses," identify the largest amounts.
+3. If they ask for "spending trends," compare amounts over time if data exists.
+4. Format all currency in INR (₹).
+5. Be concise, professional, and helpful.
+6. If the data is missing, ask the user to add more transactions to specific accounts.
 
-Analyze the context and answer the user's question accurately.`;
+User Question: "${question}"`;
     
     try {
-        const response = await ai.generate({
-            model: 'googleai/gemini-2.0-flash',
-            prompt: systemPrompt,
-        });
-
-        return response.text;
+        return await callGeminiApi(prompt);
     } catch (error) {
-        console.error('Error in financialChatbot flow:', error);
-        return "I apologize, but I encountered an issue while communicating with the AI. Please try again in a moment.";
+        console.error('Chatbot error:', error);
+        return "I'm having trouble connecting to my brain right now. Please try again in a moment!";
     }
 }
